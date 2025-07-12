@@ -1,75 +1,74 @@
 const express = require('express');
 const router = express.Router();
+const axios = require('axios');
+const moment = require('moment');
 
-/*
-router.post("/stk-push", async (req, res) => {
-console.log("📦 Full req.body:", req.body);
+const consumerKey = process.env.MPESA_CONSUMER_KEY;
+const consumerSecret = process.env.MPESA_CONSUMER_SECRET;
+const shortCode = process.env.MPESA_SHORTCODE; // 174379
+const passkey = process.env.MPESA_PASSKEY;
+const callbackUrl = process.env.MPESA_CALLBACK_URL;
 
-const phone = req.body?.phone;
-const amount = req.body?.amount;
-
-if (!phone || !amount) {
-  return res.status(400).json({ error: "Phone or amount missing" });
-}
-
-  console.log("🔥 Received STK Push request:", phone, amount);
-  res.status(200).json({ message: 'M-Pesa STK route is working!' });
-});
-
-*/
-
-
-router.post("/stk-push", async (req, res) => {
+router.post('/stk-push', async (req, res) => {
   const { phone, amount } = req.body;
   console.log("📦 Full req.body:", req.body);
-  console.log(`🔥 Received STK Push request: ${phone} ${amount}`);
+  console.log("🔥 Received STK Push request:", phone, amount);
 
   try {
-    // Simulate success response (or call actual Daraja logic)
-    return res.json({
-      ResponseCode: "0", // ✅ indicates success
-      ResponseDescription: "Success. Request accepted for processing",
-      CustomerMessage: "Success. STK push sent"
-    });
+    // 1. Encode credentials
+    const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
+
+    // 2. Get access token
+    const tokenResponse = await axios.get(
+      'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
+      { headers: { Authorization: `Basic ${auth}` } }
+    );
+    const accessToken = tokenResponse.data.access_token;
+
+    // 3. Generate password
+    const timestamp = moment().format('YYYYMMDDHHmmss');
+    const password = Buffer.from(`${shortCode}${passkey}${timestamp}`).toString('base64');
+
+    // 4. Send STK Push
+    const stkResponse = await axios.post(
+      'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
+      {
+        BusinessShortCode: shortCode,
+        Password: password,
+        Timestamp: timestamp,
+        TransactionType: 'CustomerPayBillOnline',
+        Amount: amount,
+        PartyA: phone,
+        PartyB: shortCode,
+        PhoneNumber: phone,
+        CallBackURL: callbackUrl,
+        AccountReference: 'CompanyXLTD',
+        TransactionDesc: 'Order Payment',
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    res.status(200).json(stkResponse.data);
   } catch (error) {
-    console.error("❌ STK Push error:", error);
-    return res.status(500).json({
-      ResponseCode: "1",
-      errorMessage: "STK push failed due to server error"
-    });
+    console.error("❌ STK Push Error:", error?.response?.data || error.message);
+    res.status(500).json({ error: 'Failed to initiate STK Push', details: error.message });
   }
 });
 
-
-// routes/mpesa.js
-
+// Handle callback from Safaricom
 router.post('/stk-callback', (req, res) => {
-    console.log("✅ STK Callback Received!");
-    console.log("📦 Callback Body:", JSON.stringify(req.body, null, 2));
+  console.log("📞 STK Callback Received:", JSON.stringify(req.body, null, 2));
 
-    // You can extract and save to DB here if needed
-    const callbackData = req.body.Body.stkCallback;
-
-    const resultCode = callbackData.ResultCode;
-    const resultDesc = callbackData.ResultDesc;
-    const checkoutRequestID = callbackData.CheckoutRequestID;
-
-    console.log(`✅ STK Result: ${resultDesc} (Code: ${resultCode})`);
-
-    // Example: handle success (code 0 = success)
-    if (resultCode === 0) {
-        const amount = callbackData.CallbackMetadata.Item.find(i => i.Name === 'Amount')?.Value;
-        const phone = callbackData.CallbackMetadata.Item.find(i => i.Name === 'PhoneNumber')?.Value;
-        console.log(`💰 Paid: KES ${amount} from ${phone}`);
-        // Save this to your DB if needed
-    }
-
-    // Always send back a 200 OK
-    res.json({ message: "✅ Callback received successfully" });
+  // You can store this in DB or log it to file for now
+  res.status(200).json({ message: 'Callback received successfully' });
 });
 
 
-
-
 module.exports = router;
+
 
